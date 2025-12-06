@@ -109,4 +109,5 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
   int trace_mask;              // Trace mask
+  struct usyscall *usyscall;   // USYSCALL page for fast getpid
 };

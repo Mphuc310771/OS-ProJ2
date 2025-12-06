@@ -98,3 +98,50 @@ uint64 sys_sysinfo(void) {
     return -1;
   return 0;
 }
+
+#define PGACCESS_MAX 32 // Maximum number of pages to check
+
+uint64 sys_pgaccess(void) {
+  uint64 base;      // Starting virtual address
+  int len;          // Number of pages to check
+  uint64 mask_addr; // User address to store the result bitmask
+
+  struct proc *p = myproc();
+
+  // Get arguments
+  argaddr(0, &base);
+  argint(1, &len);
+  argaddr(2, &mask_addr);
+
+  // Validate len
+  if (len < 0 || len > PGACCESS_MAX)
+    return -1;
+
+  uint32 mask = 0;
+
+  // Check each page
+  for (int i = 0; i < len; i++) {
+    uint64 va = base + i * PGSIZE;
+
+    // Get the PTE for this virtual address
+    pte_t *pte = walk(p->pagetable, va, 0);
+
+    if (pte == 0)
+      continue; // Page not mapped
+
+    if (!(*pte & PTE_V))
+      continue; // Page not valid
+
+    // Check if the Access bit is set
+    if (*pte & PTE_A) {
+      mask |= (1 << i); // Set corresponding bit in mask
+      *pte &= ~PTE_A;   // Clear the Access bit
+    }
+  }
+
+  // Copy the mask to user space
+  if (copyout(p->pagetable, mask_addr, (char *)&mask, sizeof(mask)) < 0)
+    return -1;
+
+  return 0;
+}

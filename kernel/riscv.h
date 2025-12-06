@@ -281,6 +281,7 @@ static inline void sfence_vma() {
 #define PTE_W (1L << 2)
 #define PTE_X (1L << 3)
 #define PTE_U (1L << 4) // user can access
+#define PTE_A (1L << 6) // accessed (set by hardware)
 
 #if defined(LAB_MMAP) || defined(LAB_PGTBL)
 #define PTE_LEAF(pte) (((pte) & PTE_R) | ((pte) & PTE_W) | ((pte) & PTE_X))
