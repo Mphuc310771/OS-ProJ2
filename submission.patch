@@ -1,0 +1,1137 @@
+diff --git a/Makefile b/Makefile
+index 67610ca..b992298 100644
+--- a/Makefile
++++ b/Makefile
+@@ -195,6 +195,7 @@ UPROGS=\
+ 	$U/_wc\
+ 	$U/_zombie\
+ 	$U/_trace\
++	$U/_pgtbltest\
+ 
+ 
+ 
+diff --git a/kernel/defs.h b/kernel/defs.h
+index 6bd8a2e..efab693 100644
+--- a/kernel/defs.h
++++ b/kernel/defs.h
+@@ -178,6 +178,7 @@ uint64 walkaddr(pagetable_t, uint64);
+ int copyout(pagetable_t, uint64, char *, uint64);
+ int copyin(pagetable_t, char *, uint64, uint64);
+ int copyinstr(pagetable_t, char *, uint64, uint64);
++void vmprint(pagetable_t);
+ 
+ // plic.c
+ void plicinit(void);
+diff --git a/kernel/exec.c b/kernel/exec.c
+index 6d7c452..fe8b070 100644
+--- a/kernel/exec.c
++++ b/kernel/exec.c
+@@ -1,27 +1,24 @@
+-#include "types.h"
+-#include "param.h"
++#include "defs.h"
++#include "elf.h"
+ #include "memlayout.h"
++#include "param.h"
++#include "proc.h"
+ #include "riscv.h"
+ #include "spinlock.h"
+-#include "proc.h"
+-#include "defs.h"
+-#include "elf.h"
++#include "types.h"
+ 
+ static int loadseg(pde_t *, uint64, struct inode *, uint, uint);
+ 
+-int flags2perm(int flags)
+-{
+-    int perm = 0;
+-    if(flags & 0x1)
+-      perm = PTE_X;
+-    if(flags & 0x2)
+-      perm |= PTE_W;
+-    return perm;
++int flags2perm(int flags) {
++  int perm = 0;
++  if (flags & 0x1)
++    perm = PTE_X;
++  if (flags & 0x2)
++    perm |= PTE_W;
++  return perm;
+ }
+ 
+-int
+-exec(char *path, char **argv)
+-{
++int exec(char *path, char **argv) {
+   char *s, *last;
+   int i, off;
+   uint64 argc, sz = 0, sp, ustack[MAXARG], stackbase;
+@@ -33,39 +30,40 @@ exec(char *path, char **argv)
+ 
+   begin_op();
+ 
+-  if((ip = namei(path)) == 0){
++  if ((ip = namei(path)) == 0) {
+     end_op();
+     return -1;
+   }
+   ilock(ip);
+ 
+   // Check ELF header
+-  if(readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
++  if (readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
+     goto bad;
+ 
+-  if(elf.magic != ELF_MAGIC)
++  if (elf.magic != ELF_MAGIC)
+     goto bad;
+ 
+-  if((pagetable = proc_pagetable(p)) == 0)
++  if ((pagetable = proc_pagetable(p)) == 0)
+     goto bad;
+ 
+   // Load program into memory.
+-  for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
+-    if(readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
++  for (i = 0, off = elf.phoff; i < elf.phnum; i++, off += sizeof(ph)) {
++    if (readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
+       goto bad;
+-    if(ph.type != ELF_PROG_LOAD)
++    if (ph.type != ELF_PROG_LOAD)
+       continue;
+-    if(ph.memsz < ph.filesz)
++    if (ph.memsz < ph.filesz)
+       goto bad;
+-    if(ph.vaddr + ph.memsz < ph.vaddr)
++    if (ph.vaddr + ph.memsz < ph.vaddr)
+       goto bad;
+-    if(ph.vaddr % PGSIZE != 0)
++    if (ph.vaddr % PGSIZE != 0)
+       goto bad;
+     uint64 sz1;
+-    if((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz, flags2perm(ph.flags))) == 0)
++    if ((sz1 = uvmalloc(pagetable, sz, ph.vaddr + ph.memsz,
++                        flags2perm(ph.flags))) == 0)
+       goto bad;
+     sz = sz1;
+-    if(loadseg(pagetable, ph.vaddr, ip, ph.off, ph.filesz) < 0)
++    if (loadseg(pagetable, ph.vaddr, ip, ph.off, ph.filesz) < 0)
+       goto bad;
+   }
+   iunlockput(ip);
+@@ -80,33 +78,34 @@ exec(char *path, char **argv)
+   // Use the rest as the user stack.
+   sz = PGROUNDUP(sz);
+   uint64 sz1;
+-  if((sz1 = uvmalloc(pagetable, sz, sz + (USERSTACK+1)*PGSIZE, PTE_W)) == 0)
++  if ((sz1 = uvmalloc(pagetable, sz, sz + (USERSTACK + 1) * PGSIZE, PTE_W)) ==
++      0)
+     goto bad;
+   sz = sz1;
+-  uvmclear(pagetable, sz-(USERSTACK+1)*PGSIZE);
++  uvmclear(pagetable, sz - (USERSTACK + 1) * PGSIZE);
+   sp = sz;
+-  stackbase = sp - USERSTACK*PGSIZE;
++  stackbase = sp - USERSTACK * PGSIZE;
+ 
+   // Push argument strings, prepare rest of stack in ustack.
+-  for(argc = 0; argv[argc]; argc++) {
+-    if(argc >= MAXARG)
++  for (argc = 0; argv[argc]; argc++) {
++    if (argc >= MAXARG)
+       goto bad;
+     sp -= strlen(argv[argc]) + 1;
+     sp -= sp % 16; // riscv sp must be 16-byte aligned
+-    if(sp < stackbase)
++    if (sp < stackbase)
+       goto bad;
+-    if(copyout(pagetable, sp, argv[argc], strlen(argv[argc]) + 1) < 0)
++    if (copyout(pagetable, sp, argv[argc], strlen(argv[argc]) + 1) < 0)
+       goto bad;
+     ustack[argc] = sp;
+   }
+   ustack[argc] = 0;
+ 
+   // push the array of argv[] pointers.
+-  sp -= (argc+1) * sizeof(uint64);
++  sp -= (argc + 1) * sizeof(uint64);
+   sp -= sp % 16;
+-  if(sp < stackbase)
++  if (sp < stackbase)
+     goto bad;
+-  if(copyout(pagetable, sp, (char *)ustack, (argc+1)*sizeof(uint64)) < 0)
++  if (copyout(pagetable, sp, (char *)ustack, (argc + 1) * sizeof(uint64)) < 0)
+     goto bad;
+ 
+   // arguments to user main(argc, argv)
+@@ -115,25 +114,29 @@ exec(char *path, char **argv)
+   p->trapframe->a1 = sp;
+ 
+   // Save program name for debugging.
+-  for(last=s=path; *s; s++)
+-    if(*s == '/')
+-      last = s+1;
++  for (last = s = path; *s; s++)
++    if (*s == '/')
++      last = s + 1;
+   safestrcpy(p->name, last, sizeof(p->name));
+-    
++
+   // Commit to the user image.
+   oldpagetable = p->pagetable;
+   p->pagetable = pagetable;
+   p->sz = sz;
+-  p->trapframe->epc = elf.entry;  // initial program counter = main
+-  p->trapframe->sp = sp; // initial stack pointer
++  p->trapframe->epc = elf.entry; // initial program counter = main
++  p->trapframe->sp = sp;         // initial stack pointer
+   proc_freepagetable(oldpagetable, oldsz);
+ 
++  // Print page table for the first process (pid == 1)
++  if (p->pid == 1)
++    vmprint(p->pagetable);
++
+   return argc; // this ends up in a0, the first argument to main(argc, argv)
+ 
+- bad:
+-  if(pagetable)
++bad:
++  if (pagetable)
+     proc_freepagetable(pagetable, sz);
+-  if(ip){
++  if (ip) {
+     iunlockput(ip);
+     end_op();
+   }
+@@ -144,23 +147,22 @@ exec(char *path, char **argv)
+ // va must be page-aligned
+ // and the pages from va to va+sz must already be mapped.
+ // Returns 0 on success, -1 on failure.
+-static int
+-loadseg(pagetable_t pagetable, uint64 va, struct inode *ip, uint offset, uint sz)
+-{
++static int loadseg(pagetable_t pagetable, uint64 va, struct inode *ip,
++                   uint offset, uint sz) {
+   uint i, n;
+   uint64 pa;
+ 
+-  for(i = 0; i < sz; i += PGSIZE){
++  for (i = 0; i < sz; i += PGSIZE) {
+     pa = walkaddr(pagetable, va + i);
+-    if(pa == 0)
++    if (pa == 0)
+       panic("loadseg: address should exist");
+-    if(sz - i < PGSIZE)
++    if (sz - i < PGSIZE)
+       n = sz - i;
+     else
+       n = PGSIZE;
+-    if(readi(ip, 0, (uint64)pa, offset+i, n) != n)
++    if (readi(ip, 0, (uint64)pa, offset + i, n) != n)
+       return -1;
+   }
+-  
++
+   return 0;
+ }
+diff --git a/kernel/memlayout.h b/kernel/memlayout.h
+index 3ab2ace..3642b39 100644
+--- a/kernel/memlayout.h
++++ b/kernel/memlayout.h
+@@ -6,8 +6,8 @@
+ // 00001000 -- boot ROM, provided by qemu
+ // 02000000 -- CLINT
+ // 0C000000 -- PLIC
+-// 10000000 -- uart0 
+-// 10001000 -- virtio disk 
++// 10000000 -- uart0
++// 10001000 -- virtio disk
+ // 80000000 -- boot ROM jumps here in machine mode
+ //             -kernel loads the kernel here
+ // unused RAM after 80000000.
+@@ -29,15 +29,15 @@
+ #define PLIC 0x0c000000L
+ #define PLIC_PRIORITY (PLIC + 0x0)
+ #define PLIC_PENDING (PLIC + 0x1000)
+-#define PLIC_SENABLE(hart) (PLIC + 0x2080 + (hart)*0x100)
+-#define PLIC_SPRIORITY(hart) (PLIC + 0x201000 + (hart)*0x2000)
+-#define PLIC_SCLAIM(hart) (PLIC + 0x201004 + (hart)*0x2000)
++#define PLIC_SENABLE(hart) (PLIC + 0x2080 + (hart) * 0x100)
++#define PLIC_SPRIORITY(hart) (PLIC + 0x201000 + (hart) * 0x2000)
++#define PLIC_SCLAIM(hart) (PLIC + 0x201004 + (hart) * 0x2000)
+ 
+ // the kernel expects there to be RAM
+ // for use by the kernel and user pages
+ // from physical address 0x80000000 to PHYSTOP.
+ #define KERNBASE 0x80000000L
+-#define PHYSTOP (KERNBASE + 128*1024*1024)
++#define PHYSTOP (KERNBASE + 128 * 1024 * 1024)
+ 
+ // map the trampoline page to the highest address,
+ // in both user and kernel space.
+@@ -45,7 +45,7 @@
+ 
+ // map kernel stacks beneath the trampoline,
+ // each surrounded by invalid guard pages.
+-#define KSTACK(p) (TRAMPOLINE - ((p)+1)* 2*PGSIZE)
++#define KSTACK(p) (TRAMPOLINE - ((p) + 1) * 2 * PGSIZE)
+ 
+ // User memory layout.
+ // Address zero first:
+@@ -57,3 +57,10 @@
+ //   TRAPFRAME (p->trapframe, used by the trampoline)
+ //   TRAMPOLINE (the same page as in the kernel)
+ #define TRAPFRAME (TRAMPOLINE - PGSIZE)
++#define USYSCALL (TRAPFRAME - PGSIZE)
++
++#ifndef __ASSEMBLER__
++struct usyscall {
++  int pid; // Process ID
++};
++#endif
+diff --git a/kernel/proc.c b/kernel/proc.c
+index 9ca4c69..baa0fdd 100644
+--- a/kernel/proc.c
++++ b/kernel/proc.c
+@@ -6,7 +6,6 @@
+ #include "spinlock.h"
+ #include "types.h"
+ 
+-
+ struct cpu cpus[NCPU];
+ 
+ struct proc proc[NPROC];
+@@ -119,6 +118,14 @@ found:
+     return 0;
+   }
+ 
++  // Allocate a usyscall page for fast getpid.
++  if ((p->usyscall = (struct usyscall *)kalloc()) == 0) {
++    freeproc(p);
++    release(&p->lock);
++    return 0;
++  }
++  p->usyscall->pid = p->pid;
++
+   // An empty user page table.
+   p->pagetable = proc_pagetable(p);
+   if (p->pagetable == 0) {
+@@ -143,6 +150,9 @@ static void freeproc(struct proc *p) {
+   if (p->trapframe)
+     kfree((void *)p->trapframe);
+   p->trapframe = 0;
++  if (p->usyscall)
++    kfree((void *)p->usyscall);
++  p->usyscall = 0;
+   if (p->pagetable)
+     proc_freepagetable(p->pagetable, p->sz);
+   p->pagetable = 0;
+@@ -185,6 +195,16 @@ pagetable_t proc_pagetable(struct proc *p) {
+     return 0;
+   }
+ 
++  // map the usyscall page just below the trapframe page.
++  // Read-only for user to get PID without system call.
++  if (mappages(pagetable, USYSCALL, PGSIZE, (uint64)(p->usyscall),
++               PTE_R | PTE_U) < 0) {
++    uvmunmap(pagetable, TRAPFRAME, 1, 0);
++    uvmunmap(pagetable, TRAMPOLINE, 1, 0);
++    uvmfree(pagetable, 0);
++    return 0;
++  }
++
+   return pagetable;
+ }
+ 
+@@ -193,6 +213,7 @@ pagetable_t proc_pagetable(struct proc *p) {
+ void proc_freepagetable(pagetable_t pagetable, uint64 sz) {
+   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
+   uvmunmap(pagetable, TRAPFRAME, 1, 0);
++  uvmunmap(pagetable, USYSCALL, 1, 0);
+   uvmfree(pagetable, sz);
+ }
+ 
+diff --git a/kernel/proc.h b/kernel/proc.h
+index 88438b6..0aa87cf 100644
+--- a/kernel/proc.h
++++ b/kernel/proc.h
+@@ -109,4 +109,5 @@ struct proc {
+   struct inode *cwd;           // Current directory
+   char name[16];               // Process name (debugging)
+   int trace_mask;              // Trace mask
++  struct usyscall *usyscall;   // USYSCALL page for fast getpid
+ };
+diff --git a/kernel/riscv.h b/kernel/riscv.h
+index 709f7b1..ec8c566 100644
+--- a/kernel/riscv.h
++++ b/kernel/riscv.h
+@@ -281,6 +281,7 @@ static inline void sfence_vma() {
+ #define PTE_W (1L << 2)
+ #define PTE_X (1L << 3)
+ #define PTE_U (1L << 4) // user can access
++#define PTE_A (1L << 6) // accessed (set by hardware)
+ 
+ #if defined(LAB_MMAP) || defined(LAB_PGTBL)
+ #define PTE_LEAF(pte) (((pte) & PTE_R) | ((pte) & PTE_W) | ((pte) & PTE_X))
+diff --git a/kernel/syscall.c b/kernel/syscall.c
+index 964c955..6f14e4b 100644
+--- a/kernel/syscall.c
++++ b/kernel/syscall.c
+@@ -88,18 +88,23 @@ extern uint64 sys_mkdir(void);
+ extern uint64 sys_close(void);
+ extern uint64 sys_trace(void);
+ extern uint64 sys_sysinfo(void);
++extern uint64 sys_pgaccess(void);
+ 
+ // An array mapping syscall numbers from syscall.h
+ // to the function that handles the system call.
+ static uint64 (*syscalls[])(void) = {
+-    [SYS_fork] sys_fork,   [SYS_exit] sys_exit,       [SYS_wait] sys_wait,
+-    [SYS_pipe] sys_pipe,   [SYS_read] sys_read,       [SYS_kill] sys_kill,
+-    [SYS_exec] sys_exec,   [SYS_fstat] sys_fstat,     [SYS_chdir] sys_chdir,
+-    [SYS_dup] sys_dup,     [SYS_getpid] sys_getpid,   [SYS_sbrk] sys_sbrk,
+-    [SYS_sleep] sys_sleep, [SYS_uptime] sys_uptime,   [SYS_open] sys_open,
+-    [SYS_write] sys_write, [SYS_mknod] sys_mknod,     [SYS_unlink] sys_unlink,
+-    [SYS_link] sys_link,   [SYS_mkdir] sys_mkdir,     [SYS_close] sys_close,
+-    [SYS_trace] sys_trace, [SYS_sysinfo] sys_sysinfo,
++    [SYS_fork] sys_fork,       [SYS_exit] sys_exit,
++    [SYS_wait] sys_wait,       [SYS_pipe] sys_pipe,
++    [SYS_read] sys_read,       [SYS_kill] sys_kill,
++    [SYS_exec] sys_exec,       [SYS_fstat] sys_fstat,
++    [SYS_chdir] sys_chdir,     [SYS_dup] sys_dup,
++    [SYS_getpid] sys_getpid,   [SYS_sbrk] sys_sbrk,
++    [SYS_sleep] sys_sleep,     [SYS_uptime] sys_uptime,
++    [SYS_open] sys_open,       [SYS_write] sys_write,
++    [SYS_mknod] sys_mknod,     [SYS_unlink] sys_unlink,
++    [SYS_link] sys_link,       [SYS_mkdir] sys_mkdir,
++    [SYS_close] sys_close,     [SYS_trace] sys_trace,
++    [SYS_sysinfo] sys_sysinfo, [SYS_pgaccess] sys_pgaccess,
+ };
+ 
+ static char *syscalls_name[] = {
+@@ -110,7 +115,7 @@ static char *syscalls_name[] = {
+     [SYS_sleep] "sleep", [SYS_uptime] "uptime",   [SYS_open] "open",
+     [SYS_write] "write", [SYS_mknod] "mknod",     [SYS_unlink] "unlink",
+     [SYS_link] "link",   [SYS_mkdir] "mkdir",     [SYS_close] "close",
+-    [SYS_trace] "trace", [SYS_sysinfo] "sysinfo",
++    [SYS_trace] "trace", [SYS_sysinfo] "sysinfo", [SYS_pgaccess] "pgaccess",
+ };
+ 
+ void syscall(void) {
+diff --git a/kernel/syscall.h b/kernel/syscall.h
+index 1a21b18..cbf2ac2 100644
+--- a/kernel/syscall.h
++++ b/kernel/syscall.h
+@@ -22,3 +22,4 @@
+ #define SYS_close 21
+ #define SYS_trace 22
+ #define SYS_sysinfo 23
++#define SYS_pgaccess 24
+diff --git a/kernel/sysproc.c b/kernel/sysproc.c
+index 4845a1b..6da1891 100644
+--- a/kernel/sysproc.c
++++ b/kernel/sysproc.c
+@@ -98,3 +98,50 @@ uint64 sys_sysinfo(void) {
+     return -1;
+   return 0;
+ }
++
++#define PGACCESS_MAX 32 // Maximum number of pages to check
++
++uint64 sys_pgaccess(void) {
++  uint64 base;      // Starting virtual address
++  int len;          // Number of pages to check
++  uint64 mask_addr; // User address to store the result bitmask
++
++  struct proc *p = myproc();
++
++  // Get arguments
++  argaddr(0, &base);
++  argint(1, &len);
++  argaddr(2, &mask_addr);
++
++  // Validate len
++  if (len < 0 || len > PGACCESS_MAX)
++    return -1;
++
++  uint32 mask = 0;
++
++  // Check each page
++  for (int i = 0; i < len; i++) {
++    uint64 va = base + i * PGSIZE;
++
++    // Get the PTE for this virtual address
++    pte_t *pte = walk(p->pagetable, va, 0);
++
++    if (pte == 0)
++      continue; // Page not mapped
++
++    if (!(*pte & PTE_V))
++      continue; // Page not valid
++
++    // Check if the Access bit is set
++    if (*pte & PTE_A) {
++      mask |= (1 << i); // Set corresponding bit in mask
++      *pte &= ~PTE_A;   // Clear the Access bit
++    }
++  }
++
++  // Copy the mask to user space
++  if (copyout(p->pagetable, mask_addr, (char *)&mask, sizeof(mask)) < 0)
++    return -1;
++
++  return 0;
++}
+diff --git a/kernel/vm.c b/kernel/vm.c
+index 62421a2..f8e6777 100644
+--- a/kernel/vm.c
++++ b/kernel/vm.c
+@@ -1,27 +1,25 @@
+-#include "param.h"
+-#include "types.h"
+-#include "memlayout.h"
+-#include "elf.h"
+-#include "riscv.h"
+ #include "defs.h"
++#include "elf.h"
+ #include "fs.h"
++#include "memlayout.h"
++#include "param.h"
++#include "riscv.h"
++#include "types.h"
+ 
+ /*
+  * the kernel's page table.
+  */
+ pagetable_t kernel_pagetable;
+ 
+-extern char etext[];  // kernel.ld sets this to end of kernel code.
++extern char etext[]; // kernel.ld sets this to end of kernel code.
+ 
+ extern char trampoline[]; // trampoline.S
+ 
+ // Make a direct-map page table for the kernel.
+-pagetable_t
+-kvmmake(void)
+-{
++pagetable_t kvmmake(void) {
+   pagetable_t kpgtbl;
+ 
+-  kpgtbl = (pagetable_t) kalloc();
++  kpgtbl = (pagetable_t)kalloc();
+   memset(kpgtbl, 0, PGSIZE);
+ 
+   // uart registers
+@@ -34,10 +32,11 @@ kvmmake(void)
+   kvmmap(kpgtbl, PLIC, PLIC, 0x4000000, PTE_R | PTE_W);
+ 
+   // map kernel text executable and read-only.
+-  kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
++  kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext - KERNBASE, PTE_R | PTE_X);
+ 
+   // map kernel data and the physical RAM we'll make use of.
+-  kvmmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
++  kvmmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP - (uint64)etext,
++         PTE_R | PTE_W);
+ 
+   // map the trampoline for trap entry/exit to
+   // the highest virtual address in the kernel.
+@@ -45,22 +44,16 @@ kvmmake(void)
+ 
+   // allocate and map a kernel stack for each process.
+   proc_mapstacks(kpgtbl);
+-  
++
+   return kpgtbl;
+ }
+ 
+ // Initialize the one kernel_pagetable
+-void
+-kvminit(void)
+-{
+-  kernel_pagetable = kvmmake();
+-}
++void kvminit(void) { kernel_pagetable = kvmmake(); }
+ 
+ // Switch h/w page table register to the kernel's page table,
+ // and enable paging.
+-void
+-kvminithart()
+-{
++void kvminithart() {
+   // wait for any previous writes to the page table memory to finish.
+   sfence_vma();
+ 
+@@ -82,18 +75,16 @@ kvminithart()
+ //   21..29 -- 9 bits of level-1 index.
+ //   12..20 -- 9 bits of level-0 index.
+ //    0..11 -- 12 bits of byte offset within the page.
+-pte_t *
+-walk(pagetable_t pagetable, uint64 va, int alloc)
+-{
+-  if(va >= MAXVA)
++pte_t *walk(pagetable_t pagetable, uint64 va, int alloc) {
++  if (va >= MAXVA)
+     panic("walk");
+ 
+-  for(int level = 2; level > 0; level--) {
++  for (int level = 2; level > 0; level--) {
+     pte_t *pte = &pagetable[PX(level, va)];
+-    if(*pte & PTE_V) {
++    if (*pte & PTE_V) {
+       pagetable = (pagetable_t)PTE2PA(*pte);
+     } else {
+-      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
++      if (!alloc || (pagetable = (pde_t *)kalloc()) == 0)
+         return 0;
+       memset(pagetable, 0, PGSIZE);
+       *pte = PA2PTE(pagetable) | PTE_V;
+@@ -105,21 +96,19 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
+ // Look up a virtual address, return the physical address,
+ // or 0 if not mapped.
+ // Can only be used to look up user pages.
+-uint64
+-walkaddr(pagetable_t pagetable, uint64 va)
+-{
++uint64 walkaddr(pagetable_t pagetable, uint64 va) {
+   pte_t *pte;
+   uint64 pa;
+ 
+-  if(va >= MAXVA)
++  if (va >= MAXVA)
+     return 0;
+ 
+   pte = walk(pagetable, va, 0);
+-  if(pte == 0)
++  if (pte == 0)
+     return 0;
+-  if((*pte & PTE_V) == 0)
++  if ((*pte & PTE_V) == 0)
+     return 0;
+-  if((*pte & PTE_U) == 0)
++  if ((*pte & PTE_U) == 0)
+     return 0;
+   pa = PTE2PA(*pte);
+   return pa;
+@@ -128,10 +117,8 @@ walkaddr(pagetable_t pagetable, uint64 va)
+ // add a mapping to the kernel page table.
+ // only used when booting.
+ // does not flush TLB or enable paging.
+-void
+-kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
+-{
+-  if(mappages(kpgtbl, va, sz, pa, perm) != 0)
++void kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm) {
++  if (mappages(kpgtbl, va, sz, pa, perm) != 0)
+     panic("kvmmap");
+ }
+ 
+@@ -140,30 +127,29 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
+ // va and size MUST be page-aligned.
+ // Returns 0 on success, -1 if walk() couldn't
+ // allocate a needed page-table page.
+-int
+-mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+-{
++int mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa,
++             int perm) {
+   uint64 a, last;
+   pte_t *pte;
+ 
+-  if((va % PGSIZE) != 0)
++  if ((va % PGSIZE) != 0)
+     panic("mappages: va not aligned");
+ 
+-  if((size % PGSIZE) != 0)
++  if ((size % PGSIZE) != 0)
+     panic("mappages: size not aligned");
+ 
+-  if(size == 0)
++  if (size == 0)
+     panic("mappages: size");
+-  
++
+   a = va;
+   last = va + size - PGSIZE;
+-  for(;;){
+-    if((pte = walk(pagetable, a, 1)) == 0)
++  for (;;) {
++    if ((pte = walk(pagetable, a, 1)) == 0)
+       return -1;
+-    if(*pte & PTE_V)
++    if (*pte & PTE_V)
+       panic("mappages: remap");
+     *pte = PA2PTE(pa) | perm | PTE_V;
+-    if(a == last)
++    if (a == last)
+       break;
+     a += PGSIZE;
+     pa += PGSIZE;
+@@ -174,25 +160,23 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+ // Remove npages of mappings starting from va. va must be
+ // page-aligned. The mappings must exist.
+ // Optionally free the physical memory.
+-void
+-uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
+-{
++void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free) {
+   uint64 a;
+   pte_t *pte;
+ 
+-  if((va % PGSIZE) != 0)
++  if ((va % PGSIZE) != 0)
+     panic("uvmunmap: not aligned");
+ 
+-  for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+-    if((pte = walk(pagetable, a, 0)) == 0)
++  for (a = va; a < va + npages * PGSIZE; a += PGSIZE) {
++    if ((pte = walk(pagetable, a, 0)) == 0)
+       panic("uvmunmap: walk");
+-    if((*pte & PTE_V) == 0)
++    if ((*pte & PTE_V) == 0)
+       panic("uvmunmap: not mapped");
+-    if(PTE_FLAGS(*pte) == PTE_V)
++    if (PTE_FLAGS(*pte) == PTE_V)
+       panic("uvmunmap: not a leaf");
+-    if(do_free){
++    if (do_free) {
+       uint64 pa = PTE2PA(*pte);
+-      kfree((void*)pa);
++      kfree((void *)pa);
+     }
+     *pte = 0;
+   }
+@@ -200,12 +184,10 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
+ 
+ // create an empty user page table.
+ // returns 0 if out of memory.
+-pagetable_t
+-uvmcreate()
+-{
++pagetable_t uvmcreate() {
+   pagetable_t pagetable;
+-  pagetable = (pagetable_t) kalloc();
+-  if(pagetable == 0)
++  pagetable = (pagetable_t)kalloc();
++  if (pagetable == 0)
+     return 0;
+   memset(pagetable, 0, PGSIZE);
+   return pagetable;
+@@ -214,39 +196,36 @@ uvmcreate()
+ // Load the user initcode into address 0 of pagetable,
+ // for the very first process.
+ // sz must be less than a page.
+-void
+-uvmfirst(pagetable_t pagetable, uchar *src, uint sz)
+-{
++void uvmfirst(pagetable_t pagetable, uchar *src, uint sz) {
+   char *mem;
+ 
+-  if(sz >= PGSIZE)
++  if (sz >= PGSIZE)
+     panic("uvmfirst: more than a page");
+   mem = kalloc();
+   memset(mem, 0, PGSIZE);
+-  mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
++  mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W | PTE_R | PTE_X | PTE_U);
+   memmove(mem, src, sz);
+ }
+ 
+ // Allocate PTEs and physical memory to grow process from oldsz to
+ // newsz, which need not be page aligned.  Returns new size or 0 on error.
+-uint64
+-uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
+-{
++uint64 uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm) {
+   char *mem;
+   uint64 a;
+ 
+-  if(newsz < oldsz)
++  if (newsz < oldsz)
+     return oldsz;
+ 
+   oldsz = PGROUNDUP(oldsz);
+-  for(a = oldsz; a < newsz; a += PGSIZE){
++  for (a = oldsz; a < newsz; a += PGSIZE) {
+     mem = kalloc();
+-    if(mem == 0){
++    if (mem == 0) {
+       uvmdealloc(pagetable, a, oldsz);
+       return 0;
+     }
+     memset(mem, 0, PGSIZE);
+-    if(mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
++    if (mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R | PTE_U | xperm) !=
++        0) {
+       kfree(mem);
+       uvmdealloc(pagetable, a, oldsz);
+       return 0;
+@@ -259,13 +238,11 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
+ // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
+ // need to be less than oldsz.  oldsz can be larger than the actual
+ // process size.  Returns the new process size.
+-uint64
+-uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
+-{
+-  if(newsz >= oldsz)
++uint64 uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz) {
++  if (newsz >= oldsz)
+     return oldsz;
+ 
+-  if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
++  if (PGROUNDUP(newsz) < PGROUNDUP(oldsz)) {
+     int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+     uvmunmap(pagetable, PGROUNDUP(newsz), npages, 1);
+   }
+@@ -275,31 +252,27 @@ uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
+ 
+ // Recursively free page-table pages.
+ // All leaf mappings must already have been removed.
+-void
+-freewalk(pagetable_t pagetable)
+-{
++void freewalk(pagetable_t pagetable) {
+   // there are 2^9 = 512 PTEs in a page table.
+-  for(int i = 0; i < 512; i++){
++  for (int i = 0; i < 512; i++) {
+     pte_t pte = pagetable[i];
+-    if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
++    if ((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+       // this PTE points to a lower-level page table.
+       uint64 child = PTE2PA(pte);
+       freewalk((pagetable_t)child);
+       pagetable[i] = 0;
+-    } else if(pte & PTE_V){
++    } else if (pte & PTE_V) {
+       panic("freewalk: leaf");
+     }
+   }
+-  kfree((void*)pagetable);
++  kfree((void *)pagetable);
+ }
+ 
+ // Free user memory pages,
+ // then free page-table pages.
+-void
+-uvmfree(pagetable_t pagetable, uint64 sz)
+-{
+-  if(sz > 0)
+-    uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
++void uvmfree(pagetable_t pagetable, uint64 sz) {
++  if (sz > 0)
++    uvmunmap(pagetable, 0, PGROUNDUP(sz) / PGSIZE, 1);
+   freewalk(pagetable);
+ }
+ 
+@@ -309,45 +282,41 @@ uvmfree(pagetable_t pagetable, uint64 sz)
+ // physical memory.
+ // returns 0 on success, -1 on failure.
+ // frees any allocated pages on failure.
+-int
+-uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
+-{
++int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz) {
+   pte_t *pte;
+   uint64 pa, i;
+   uint flags;
+   char *mem;
+ 
+-  for(i = 0; i < sz; i += PGSIZE){
+-    if((pte = walk(old, i, 0)) == 0)
++  for (i = 0; i < sz; i += PGSIZE) {
++    if ((pte = walk(old, i, 0)) == 0)
+       panic("uvmcopy: pte should exist");
+-    if((*pte & PTE_V) == 0)
++    if ((*pte & PTE_V) == 0)
+       panic("uvmcopy: page not present");
+     pa = PTE2PA(*pte);
+     flags = PTE_FLAGS(*pte);
+-    if((mem = kalloc()) == 0)
++    if ((mem = kalloc()) == 0)
+       goto err;
+-    memmove(mem, (char*)pa, PGSIZE);
+-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
++    memmove(mem, (char *)pa, PGSIZE);
++    if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
+       kfree(mem);
+       goto err;
+     }
+   }
+   return 0;
+ 
+- err:
++err:
+   uvmunmap(new, 0, i / PGSIZE, 1);
+   return -1;
+ }
+ 
+ // mark a PTE invalid for user access.
+ // used by exec for the user stack guard page.
+-void
+-uvmclear(pagetable_t pagetable, uint64 va)
+-{
++void uvmclear(pagetable_t pagetable, uint64 va) {
+   pte_t *pte;
+-  
++
+   pte = walk(pagetable, va, 0);
+-  if(pte == 0)
++  if (pte == 0)
+     panic("uvmclear");
+   *pte &= ~PTE_U;
+ }
+@@ -355,23 +324,21 @@ uvmclear(pagetable_t pagetable, uint64 va)
+ // Copy from kernel to user.
+ // Copy len bytes from src to virtual address dstva in a given page table.
+ // Return 0 on success, -1 on error.
+-int
+-copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+-{
++int copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len) {
+   uint64 n, va0, pa0;
+   pte_t *pte;
+ 
+-  while(len > 0){
++  while (len > 0) {
+     va0 = PGROUNDDOWN(dstva);
+-    if(va0 >= MAXVA)
++    if (va0 >= MAXVA)
+       return -1;
+     pte = walk(pagetable, va0, 0);
+-    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
+-       (*pte & PTE_W) == 0)
++    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
++        (*pte & PTE_W) == 0)
+       return -1;
+     pa0 = PTE2PA(*pte);
+     n = PGSIZE - (dstva - va0);
+-    if(n > len)
++    if (n > len)
+       n = len;
+     memmove((void *)(pa0 + (dstva - va0)), src, n);
+ 
+@@ -385,18 +352,16 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
+ // Copy from user to kernel.
+ // Copy len bytes to dst from virtual address srcva in a given page table.
+ // Return 0 on success, -1 on error.
+-int
+-copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
+-{
++int copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len) {
+   uint64 n, va0, pa0;
+ 
+-  while(len > 0){
++  while (len > 0) {
+     va0 = PGROUNDDOWN(srcva);
+     pa0 = walkaddr(pagetable, va0);
+-    if(pa0 == 0)
++    if (pa0 == 0)
+       return -1;
+     n = PGSIZE - (srcva - va0);
+-    if(n > len)
++    if (n > len)
+       n = len;
+     memmove(dst, (void *)(pa0 + (srcva - va0)), n);
+ 
+@@ -411,24 +376,22 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
+ // Copy bytes to dst from virtual address srcva in a given page table,
+ // until a '\0', or max.
+ // Return 0 on success, -1 on error.
+-int
+-copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
+-{
++int copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max) {
+   uint64 n, va0, pa0;
+   int got_null = 0;
+ 
+-  while(got_null == 0 && max > 0){
++  while (got_null == 0 && max > 0) {
+     va0 = PGROUNDDOWN(srcva);
+     pa0 = walkaddr(pagetable, va0);
+-    if(pa0 == 0)
++    if (pa0 == 0)
+       return -1;
+     n = PGSIZE - (srcva - va0);
+-    if(n > max)
++    if (n > max)
+       n = max;
+ 
+-    char *p = (char *) (pa0 + (srcva - va0));
+-    while(n > 0){
+-      if(*p == '\0'){
++    char *p = (char *)(pa0 + (srcva - va0));
++    while (n > 0) {
++      if (*p == '\0') {
+         *dst = '\0';
+         got_null = 1;
+         break;
+@@ -443,9 +406,36 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
+ 
+     srcva = va0 + PGSIZE;
+   }
+-  if(got_null){
++  if (got_null) {
+     return 0;
+   } else {
+     return -1;
+   }
+ }
++
++// Recursively print page table entries with proper indentation
++static void vmprint_recursive(pagetable_t pagetable, int level) {
++  // there are 2^9 = 512 PTEs in a page table.
++  for (int i = 0; i < 512; i++) {
++    pte_t pte = pagetable[i];
++    if (pte & PTE_V) {
++      // Print indentation based on level
++      for (int j = 0; j <= level; j++) {
++        printf("..");
++      }
++      uint64 pa = PTE2PA(pte);
++      printf("%d: pte %p pa %p\n", i, (void *)pte, (void *)pa);
++
++      // If this is not a leaf PTE (no R/W/X bits set), recurse
++      if ((pte & (PTE_R | PTE_W | PTE_X)) == 0) {
++        vmprint_recursive((pagetable_t)pa, level + 1);
++      }
++    }
++  }
++}
++
++// Print a page table.
++void vmprint(pagetable_t pagetable) {
++  printf("page table %p\n", pagetable);
++  vmprint_recursive(pagetable, 0);
++}
+diff --git a/user/pgtbltest.c b/user/pgtbltest.c
+new file mode 100644
+index 0000000..27c43f8
+--- /dev/null
++++ b/user/pgtbltest.c
+@@ -0,0 +1,103 @@
++#include "kernel/memlayout.h"
++#include "kernel/riscv.h"
++#include "kernel/stat.h"
++#include "kernel/types.h"
++#include "user/user.h"
++
++#ifndef PGSIZE
++#define PGSIZE 4096
++#endif
++
++// Test pgaccess syscall
++void pgaccess_test() {
++  char *buf;
++  unsigned int abits;
++
++  printf("pgaccess_test starting\n");
++
++  // Allocate 32 pages
++  buf = malloc(32 * PGSIZE);
++  if (buf == 0) {
++    printf("malloc failed\n");
++    exit(1);
++  }
++
++  // Access some pages (pages 1, 2, 30)
++  buf[PGSIZE * 1 + 10] = 'a';
++  buf[PGSIZE * 2 + 20] = 'b';
++  buf[PGSIZE * 30 + 30] = 'c';
++
++  // Call pgaccess to check which pages were accessed
++  if (pgaccess(buf, 32, &abits) < 0) {
++    printf("pgaccess failed\n");
++    exit(1);
++  }
++
++  // Check if pages 1, 2, 30 are marked as accessed
++  // Expected: bits 1, 2, 30 should be set
++  printf("pgaccess returned: 0x%x\n", abits);
++
++  if ((abits & (1 << 1)) == 0) {
++    printf("FAIL: page 1 not marked accessed\n");
++  } else {
++    printf("PASS: page 1 marked accessed\n");
++  }
++
++  if ((abits & (1 << 2)) == 0) {
++    printf("FAIL: page 2 not marked accessed\n");
++  } else {
++    printf("PASS: page 2 marked accessed\n");
++  }
++
++  if ((abits & (1 << 30)) == 0) {
++    printf("FAIL: page 30 not marked accessed\n");
++  } else {
++    printf("PASS: page 30 marked accessed\n");
++  }
++
++  // Call pgaccess again - should return 0 since A bits were cleared
++  if (pgaccess(buf, 32, &abits) < 0) {
++    printf("pgaccess failed on second call\n");
++    exit(1);
++  }
++
++  if (abits == 0) {
++    printf("PASS: A bits cleared after first pgaccess call\n");
++  } else {
++    printf("FAIL: A bits not cleared, got 0x%x\n", abits);
++  }
++
++  free(buf);
++  printf("pgaccess_test done\n");
++}
++
++// Test USYSCALL - fast getpid using shared memory
++void ugetpid_test() {
++  int i;
++
++  printf("ugetpid_test starting\n");
++
++  // Compare getpid() syscall result with USYSCALL page
++  struct usyscall *u = (struct usyscall *)USYSCALL;
++
++  for (i = 0; i < 64; i++) {
++    int pid = getpid();
++    if (pid != u->pid) {
++      printf("FAIL: syscall getpid %d != usyscall pid %d\n", pid, u->pid);
++      exit(1);
++    }
++  }
++
++  printf("PASS: usyscall pid matches getpid()\n");
++  printf("ugetpid_test done\n");
++}
++
++int main(int argc, char *argv[]) {
++  printf("pgtbltest starting\n");
++
++  ugetpid_test();
++  pgaccess_test();
++
++  printf("pgtbltest: all tests passed\n");
++  exit(0);
++}
+diff --git a/user/user.h b/user/user.h
+index 793b6de..6d1030d 100644
+--- a/user/user.h
++++ b/user/user.h
+@@ -31,6 +31,7 @@ int uptime(void);
+ int trace(int);
+ struct sysinfo;
+ int sysinfo(struct sysinfo *);
++int pgaccess(void *base, int len, void *mask);
+ 
+ // ulib.c
+ int stat(const char *, struct stat *);
+diff --git a/user/usys.pl b/user/usys.pl
+index bc109fd..3d50c60 100755
+--- a/user/usys.pl
++++ b/user/usys.pl
+@@ -38,3 +38,5 @@ entry("sleep");
+ entry("uptime");
+ entry("trace");
+ entry("sysinfo");
++entry("pgaccess");
++
