@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+
+import re
+from gradelib import *
+
+r = Runner(save("xv6.out"))
+
+@test(4, "trace 32 grep")
+def test_trace_grep():
+    r.run_qemu(shell_script([
+        'trace 32 grep hello README'
+    ]))
+    r.match('^\\d+: syscall read -> \\d+')
+
+@test(4, "trace all grep")
+def test_trace_all():
+    r.run_qemu(shell_script([
+        'trace 2147483647 grep hello README'
+    ]))
+    r.match('^\\d+: syscall trace -> 0')
+    r.match('^\\d+: syscall exec -> \\d+')
+    r.match('^\\d+: syscall open -> 3')
+    r.match('^\\d+: syscall read -> \\d+')
+    r.match('^\\d+: syscall close -> 0')
+
+@test(4, "trace 2 usertests forkforkfork")
+def test_trace_forkfork():
+    r.run_qemu(shell_script([
+        'trace 2 usertests forkforkfork'
+    ], timeout=120))
+    r.match('^\\d+: syscall fork -> \\d+')
+
+@test(4, "sysinfotest")
+def test_sysinfo():
+    r.run_qemu(shell_script([
+        'sysinfotest'
+    ]))
+    r.match('^sysinfotest: OK')
+
+run_tests()

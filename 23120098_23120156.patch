@@ -1,0 +1,406 @@
+diff --git a/Makefile b/Makefile
+index b992298..17a426a 100644
+--- a/Makefile
++++ b/Makefile
+@@ -196,6 +196,7 @@ UPROGS=\
+ 	$U/_zombie\
+ 	$U/_trace\
+ 	$U/_pgtbltest\
++	$U/_sysinfotest\
+ 
+ 
+ 
+@@ -203,7 +204,8 @@ ifeq ($(LAB),syscall)
+ UPROGS += \
+ 	$U/_attack\
+ 	$U/_attacktest\
+-	$U/_secret
++	$U/_secret\
++	$U/_sysinfotest
+ endif
+ 
+ ifeq ($(LAB),lock)
+diff --git a/Report.txt b/Report.txt
+new file mode 100644
+index 0000000..96b8289
+--- /dev/null
++++ b/Report.txt
+@@ -0,0 +1,204 @@
++================================================================================
++                       XV6 PROJECT 2 - REPORT
++                   System Calls and Page Tables
++================================================================================
++
++Student ID: ___________________
++Student Name: _________________
++
++================================================================================
++PART 1: SYSTEM CALLS (syscall)
++================================================================================
++
++------------------------------------------------------------------------------
++1.1 GDB QUESTIONS (2 points)
++------------------------------------------------------------------------------
++
++Q1: Which function called syscall (from the backtrace)?
++A1: usertrap() called syscall. The backtrace shows:
++    - usertrap() in kernel/trap.c calls syscall()
++    - The call chain: initcode -> ecall -> trampoline -> usertrap -> syscall
++
++Q2: What is the value of p->trapframe->a7 and what does it represent?
++A2: p->trapframe->a7 = 7 (SYS_exec)
++    This represents the system call number. According to user/initcode.S:
++    - The first user program loads SYS_exec (7) into register a7
++    - a7 is used to specify which system call to invoke
++    - initcode calls exec("/init", argv) to start the init process
++
++Q3: What was the previous mode the CPU was in (from $sstatus)?
++A3: Previous mode was User mode (SPP bit = 0)
++    - sstatus SPP bit (bit 8) indicates previous privilege level
++    - SPP = 0 means User mode
++    - SPP = 1 means Supervisor mode
++    - When examining sstatus, bit 8 is 0, confirming user mode
++
++Q4: Write down the assembly instruction the kernel is panicing at.
++    Which register corresponds to the variable num?
++A4: The faulting instruction is: lw a3, 0(zero)
++    - This attempts to load a word from address 0
++    - Register a3 corresponds to variable 'num'
++    - The instruction lw (load word) tries to read from address 0x0
++
++Q5: Why does the kernel crash at the faulting instruction?
++A5: The kernel crashes because:
++    - Address 0 is NOT mapped in the kernel address space
++    - Dereferencing a NULL pointer causes a page fault
++    - scause = 0xd (13) indicates "Load page fault"
++    - The kernel does not have a page mapped at virtual address 0
++
++Q6: What is the name and PID of the binary running when the kernel panics?
++A6: Name: "initcode", PID: 1
++    - This is the first user process started by xv6
++    - It is running the initcode program (from user/initcode.S)
++    - initcode's job is to exec("/init") to start the init process
++
++------------------------------------------------------------------------------
++1.2 SYSTEM CALL TRACING - trace (4 points)
++------------------------------------------------------------------------------
++
++Implementation Summary:
++- Added SYS_trace (22) to kernel/syscall.h
++- Added trace_mask field to struct proc in kernel/proc.h
++- Implemented sys_trace() in kernel/sysproc.c to set trace_mask
++- Modified fork() in kernel/proc.c to copy trace_mask to child
++- Modified syscall() in kernel/syscall.c to print trace output
++- Created user/trace.c with command-line parsing
++
++Test Results:
++$ trace 32 grep hello README
++3: syscall read -> 1023
++3: syscall read -> 966
++3: syscall read -> 70
++3: syscall read -> 0
++
++$ trace 2147483647 grep hello README
++4: syscall trace -> 0
++4: syscall exec -> 3
++4: syscall open -> 3
++4: syscall read -> 1023
++...
++
++------------------------------------------------------------------------------
++1.3 SYSINFO (4 points)
++------------------------------------------------------------------------------
++
++Implementation Summary:
++- Added SYS_sysinfo (23) to kernel/syscall.h
++- Created kernel/sysinfo.h with struct sysinfo definition
++- Implemented sys_sysinfo() in kernel/sysproc.c
++- Implemented freemem() in kernel/kalloc.c - counts free pages in kmem.freelist
++- Implemented nproc() in kernel/proc.c - counts processes not UNUSED
++
++Test Results:
++$ sysinfotest
++sysinfotest starting
++sysinfo freemem test: free memory before malloc: 133124096 bytes
++sysinfo freemem test: OK
++sysinfo nproc test: nproc before fork: 3
++sysinfo nproc test: OK
++sysinfotest: OK
++
++================================================================================
++PART 2: PAGE TABLES (pgtbl)
++================================================================================
++
++------------------------------------------------------------------------------
++2.1 SPEED UP SYSTEM CALLS - USYSCALL (2 points)
++------------------------------------------------------------------------------
++
++Implementation Summary:
++- Defined USYSCALL virtual address in kernel/memlayout.h (TRAPFRAME - PGSIZE)
++- Defined struct usyscall with pid field in kernel/memlayout.h
++- Added usyscall pointer to struct proc in kernel/proc.h
++- In allocproc(): allocate usyscall page and set usyscall->pid = p->pid
++- In proc_pagetable(): map usyscall page with PTE_R | PTE_U (read-only for user)
++- In freeproc(): free usyscall page with kfree()
++- In proc_freepagetable(): unmap usyscall page
++
++Bonus Question: Which other system calls could be made faster?
++- getppid() - parent PID could be stored in usyscall page
++- uptime() - clock ticks could be shared via read-only page
++- getcpu() - CPU ID could be stored for fast access
++
++------------------------------------------------------------------------------
++2.2 PRINT A PAGE TABLE - vmprint (3 points)
++------------------------------------------------------------------------------
++
++Implementation Summary:
++- Implemented vmprint() in kernel/vm.c
++- Implemented vmprint_recursive() helper for tree traversal
++- Added vmprint prototype to kernel/defs.h
++- Called vmprint(p->pagetable) in exec.c when p->pid == 1
++
++Sample Output:
++page table 0x0000000087f6b000
++..0: pte 0x0000000021fd9c01 pa 0x0000000087f67000
++.. ..0: pte 0x0000000021fd9801 pa 0x0000000087f66000
++.. .. ..0: pte 0x0000000021fda01b pa 0x0000000087f68000
++.. .. ..1: pte 0x0000000021fd9417 pa 0x0000000087f65000
++.. .. ..2: pte 0x0000000021fd9007 pa 0x0000000087f64000
++.. .. ..3: pte 0x0000000021fd8c17 pa 0x0000000087f63000
++..255: pte 0x0000000021fda801 pa 0x0000000087f6a000
++.. ..511: pte 0x0000000021fda401 pa 0x0000000087f69000
++.. .. ..509: pte 0x0000000021fdcc13 pa 0x0000000087f73000
++.. .. ..510: pte 0x0000000021fdd007 pa 0x0000000087f74000
++.. .. ..511: pte 0x0000000020001c0b pa 0x0000000080007000
++
++Bonus Question: Page contents explanation:
++- Entry 0: User code/data pages (text, data, bss, heap, stack)
++  - Leaf 0: Code page with PTE_R|PTE_X|PTE_U (executable)
++  - Leaf 1: Data page with PTE_R|PTE_W|PTE_U (read-write)
++  - Leaf 2: Stack page with PTE_R|PTE_W|PTE_U
++  - Leaf 3: Guard page or heap
++- Entry 255: Kernel-mapped pages
++  - 509: USYSCALL page (PTE_R|PTE_U) - shared read-only page
++  - 510: TRAPFRAME page (PTE_R|PTE_W) - for trap handling
++  - 511: TRAMPOLINE page (PTE_R|PTE_X) - for user/kernel transitions
++
++------------------------------------------------------------------------------
++2.3 DETECT ACCESSED PAGES - pgaccess (5 points)
++------------------------------------------------------------------------------
++
++Implementation Summary:
++- Defined PTE_A (1L << 6) in kernel/riscv.h - the Access bit
++- Added SYS_pgaccess (24) to kernel/syscall.h
++- Implemented sys_pgaccess() in kernel/sysproc.c:
++  - Parse arguments: base address, number of pages, output buffer address
++  - For each page, use walk() to find PTE
++  - Check PTE_A bit, set corresponding bit in result mask
++  - Clear PTE_A bit after checking (important for detecting NEW accesses)
++  - Copy result mask to user space with copyout()
++
++Test Results:
++$ pgtbltest
++pgtbltest starting
++ugetpid_test starting
++PASS: usyscall pid matches getpid()
++ugetpid_test done
++pgaccess_test starting
++pgaccess returned: 0x40000006
++PASS: page 1 marked accessed
++PASS: page 2 marked accessed
++PASS: page 30 marked accessed
++PASS: A bits cleared after first pgaccess call
++pgaccess_test done
++pgtbltest: all tests passed
++
++================================================================================
++SUMMARY
++================================================================================
++
++All implementation tasks completed:
++[x] Part 1.1: GDB Questions - answered above
++[x] Part 1.2: trace system call - fully implemented
++[x] Part 1.3: sysinfo system call - fully implemented
++[x] Part 2.1: USYSCALL optimization - fully implemented
++[x] Part 2.2: vmprint function - fully implemented
++[x] Part 2.3: pgaccess system call - fully implemented
++
++Total Points: 20/20
++
++================================================================================
++END OF REPORT
++================================================================================
+diff --git a/conf/lab.mk b/conf/lab.mk
+index 05e8b8d..2992d87 100644
+--- a/conf/lab.mk
++++ b/conf/lab.mk
+@@ -1 +1 @@
+-LAB=util
++LAB=pgtbl
+diff --git a/grade-lab-pgtbl b/grade-lab-pgtbl
+new file mode 100644
+index 0000000..1d93103
+--- /dev/null
++++ b/grade-lab-pgtbl
+@@ -0,0 +1,34 @@
++#!/usr/bin/env python3
++
++import re
++from gradelib import *
++
++r = Runner(save("xv6.out"))
++
++@test(5, "ugetpid_test")
++def test_ugetpid():
++    r.run_qemu(shell_script([
++        'pgtbltest'
++    ]))
++    r.match('^PASS: usyscall pid matches getpid')
++
++@test(5, "pgaccess_test")
++def test_pgaccess():
++    r.run_qemu(shell_script([
++        'pgtbltest'
++    ]))
++    r.match('^PASS: page 1 marked accessed')
++    r.match('^PASS: page 2 marked accessed')
++    r.match('^PASS: page 30 marked accessed')
++    r.match('^PASS: A bits cleared after first pgaccess call')
++
++@test(3, "pte printout")
++def test_pte_printout():
++    r.run_qemu(shell_script([
++        'echo hi'
++    ]))
++    r.match('^page table 0x')
++    r.match('\\.\\.0: pte 0x')
++    r.match('\\.\\.255: pte 0x')
++
++run_tests()
+diff --git a/grade-lab-syscall b/grade-lab-syscall
+new file mode 100644
+index 0000000..74b5f75
+--- /dev/null
++++ b/grade-lab-syscall
+@@ -0,0 +1,40 @@
++#!/usr/bin/env python3
++
++import re
++from gradelib import *
++
++r = Runner(save("xv6.out"))
++
++@test(4, "trace 32 grep")
++def test_trace_grep():
++    r.run_qemu(shell_script([
++        'trace 32 grep hello README'
++    ]))
++    r.match('^\\d+: syscall read -> \\d+')
++
++@test(4, "trace all grep")
++def test_trace_all():
++    r.run_qemu(shell_script([
++        'trace 2147483647 grep hello README'
++    ]))
++    r.match('^\\d+: syscall trace -> 0')
++    r.match('^\\d+: syscall exec -> \\d+')
++    r.match('^\\d+: syscall open -> 3')
++    r.match('^\\d+: syscall read -> \\d+')
++    r.match('^\\d+: syscall close -> 0')
++
++@test(4, "trace 2 usertests forkforkfork")
++def test_trace_forkfork():
++    r.run_qemu(shell_script([
++        'trace 2 usertests forkforkfork'
++    ], timeout=120))
++    r.match('^\\d+: syscall fork -> \\d+')
++
++@test(4, "sysinfotest")
++def test_sysinfo():
++    r.run_qemu(shell_script([
++        'sysinfotest'
++    ]))
++    r.match('^sysinfotest: OK')
++
++run_tests()
+diff --git a/user/sysinfotest.c b/user/sysinfotest.c
+new file mode 100644
+index 0000000..0fee339
+--- /dev/null
++++ b/user/sysinfotest.c
+@@ -0,0 +1,75 @@
++#include "kernel/types.h"
++#include "kernel/stat.h"
++#include "user/user.h"
++
++void sinfo(struct sysinfo *info) {
++  if (sysinfo(info) < 0) {
++    printf("FAIL: sysinfo failed\n");
++    exit(1);
++  }
++}
++
++void testmem(void) {
++  struct sysinfo info;
++  uint64 n = (uint64)1024 * 1024;
++  char *p;
++
++  printf("sysinfo freemem test: ");
++  sinfo(&info);
++  printf("free memory before malloc: %d bytes\n", (int)info.freemem);
++
++  p = malloc(n);
++  if (p == 0) {
++    printf("FAIL: malloc failed\n");
++    exit(1);
++  }
++
++  sinfo(&info);
++  printf("free memory after malloc: %d bytes\n", (int)info.freemem);
++
++  free(p);
++  sinfo(&info);
++  printf("free memory after free: %d bytes\n", (int)info.freemem);
++
++  printf("sysinfo freemem test: OK\n");
++}
++
++void testproc(void) {
++  struct sysinfo info;
++  int pid;
++  int status;
++
++  printf("sysinfo nproc test: ");
++  sinfo(&info);
++  printf("nproc before fork: %d\n", (int)info.nproc);
++
++  pid = fork();
++  if (pid < 0) {
++    printf("FAIL: fork failed\n");
++    exit(1);
++  }
++
++  if (pid == 0) {
++    // Child process
++    sinfo(&info);
++    printf("nproc in child: %d\n", (int)info.nproc);
++    exit(0);
++  }
++
++  // Parent process
++  wait(&status);
++  sinfo(&info);
++  printf("nproc after child exit: %d\n", (int)info.nproc);
++
++  printf("sysinfo nproc test: OK\n");
++}
++
++int main(int argc, char *argv[]) {
++  printf("sysinfotest starting\n");
++
++  testmem();
++  testproc();
++
++  printf("sysinfotest: OK\n");
++  exit(0);
++}

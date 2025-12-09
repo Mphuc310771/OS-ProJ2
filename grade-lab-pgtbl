@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+
+import re
+from gradelib import *
+
+r = Runner(save("xv6.out"))
+
+@test(5, "ugetpid_test")
+def test_ugetpid():
+    r.run_qemu(shell_script([
+        'pgtbltest'
+    ]))
+    r.match('^PASS: usyscall pid matches getpid')
+
+@test(5, "pgaccess_test")
+def test_pgaccess():
+    r.run_qemu(shell_script([
+        'pgtbltest'
+    ]))
+    r.match('^PASS: page 1 marked accessed')
+    r.match('^PASS: page 2 marked accessed')
+    r.match('^PASS: page 30 marked accessed')
+    r.match('^PASS: A bits cleared after first pgaccess call')
+
+@test(3, "pte printout")
+def test_pte_printout():
+    r.run_qemu(shell_script([
+        'echo hi'
+    ]))
+    r.match('^page table 0x')
+    r.match('\\.\\.0: pte 0x')
+    r.match('\\.\\.255: pte 0x')
+
+run_tests()
