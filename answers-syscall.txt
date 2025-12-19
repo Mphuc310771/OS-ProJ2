@@ -1,0 +1,1 @@
+See answers in kernel/vm.c vmprint function and kernel/sysproc.c pgaccess implementation.
