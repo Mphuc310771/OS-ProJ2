@@ -178,7 +178,6 @@ int mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa,
 void uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free) {
   uint64 a;
   pte_t *pte;
-  int sz;
 
   if ((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
@@ -306,7 +305,6 @@ int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz) {
   uint64 pa, i;
   uint flags;
   char *mem;
-  int szinc;
 
   for (i = 0; i < sz; i += PGSIZE) {
     if ((pte = walk(old, i, 0)) == 0)
@@ -465,16 +463,3 @@ void vmprint(pagetable_t pagetable) {
   printf("page table %p\n", pagetable);
   vmprint_recursive(pagetable, 0);
 }
-
-#ifdef LAB_PGTBL
-void vmprint(pagetable_t pagetable) {
-  // your code here
-}
-#endif
-
-#ifdef LAB_PGTBL
-pte_t *pgpte(pagetable_t pagetable, uint64 va) {
-  return walk(pagetable, va, 0);
-}
-#endif
->>>>>>> syscall

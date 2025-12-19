@@ -1,10 +1,6 @@
 #include "kernel/types.h"
 struct stat;
 struct rtcdate;
-struct sysinfo {
-  uint64 freemem;
-  uint64 nproc;
-};
 
 // system calls
 int fork(void);
