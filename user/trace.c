@@ -25,7 +25,7 @@ int is_valid_number(char *s) {
   // Check each character is a digit
   while (s[i] != '\0') {
     if (s[i] < '0' || s[i] > '9') {
-      return 0;  // Non-digit character found
+      return 0; // Non-digit character found
     }
     len++;
     i++;
@@ -55,7 +55,9 @@ int main(int argc, char *argv[]) {
   // Validate mask is a valid non-negative integer
   if (!is_valid_number(argv[1])) {
     fprintf(2, "Error: Invalid mask '%s'\n", argv[1]);
-    fprintf(2, "Mask must be a non-negative integer (digits only, max %d digits)\n", MAX_MASK_LEN);
+    fprintf(
+        2, "Mask must be a non-negative integer (digits only, max %d digits)\n",
+        MAX_MASK_LEN);
     fprintf(2, "Examples:\n");
     fprintf(2, "  trace 32 grep hello README    (trace read syscall)\n");
     fprintf(2, "  trace 2147483647 ls           (trace all syscalls)\n");

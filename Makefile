@@ -204,8 +204,12 @@ ifeq ($(LAB),syscall)
 UPROGS += \
 	$U/_attack\
 	$U/_attacktest\
+<<<<<<< HEAD
 	$U/_secret\
 	$U/_sysinfotest
+=======
+	$U/_secret
+>>>>>>> syscall
 endif
 
 ifeq ($(LAB),lock)
