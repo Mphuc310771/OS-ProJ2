@@ -1,5 +1,96 @@
-Q: Explain which relevant kernel data structures you had to modify to support superpages, and why.
-A: I modified the physical memory allocator (kalloc.c) to support allocating and freeing valid 2MB (superpage) chunks. I added a new free list `kmem.freelist_huge` for these distinct chunks. In `vm.c`, I modified `uvmalloc` to detect when a requested allocation size and alignment allow for a superpage, and if so, allocate a huge page and map it directly into the page table at level 1, rather than using standard 4KB pages at level 0. I also updated `uvmunmap` and `uvmcopy` to correctly handle these huge pages by checking the page table level and flags.
+================================================================================
+                    PAGE TABLES LAB - ANSWERS
+================================================================================
+
+BONUS QUESTION 1: Speed up system calls
+--------------------------------------------------------------------------------
+Q: Which other xv6 system call(s) could be made faster using this shared page? 
+   Explain how.
+
+Answer:
+The following system calls could be optimized using the shared USYSCALL page:
+
+1. getppid() - Get Parent Process ID
+   - Store the parent's PID in the usyscall struct alongside the current PID
+   - User can read it directly without kernel trap
+
+2. uptime() - Get system uptime (ticks)
+   - Kernel updates a shared "ticks" field in the usyscall page periodically
+   - User reads it directly; may be slightly stale but acceptable for most uses
+
+3. times() - Get process CPU times
+   - Store user/system time counters in the shared page
+   - Kernel updates on context switch; user reads without syscall
+
+4. getcpu() - Get current CPU number
+   - Store hartid in the shared page (updated on context switch)
+   - Useful for CPU affinity or NUMA-aware applications
+
+Key insight: Any read-only information that the kernel can update periodically
+and the user process only needs to read can benefit from this optimization.
+The trade-off is that the data may be slightly stale between kernel updates.
+
+================================================================================
+
+BONUS QUESTION 2: Print a page table (vmprint)
+--------------------------------------------------------------------------------
+Q: For every leaf page in the vmprint output, explain what it logically 
+   contains and what its permission bits are.
+
+Answer for a typical init process page table:
+
+Page table 0x0000000087f6b000    <- Root page table physical address
+
+Level 2 (root) -> Level 1 -> Level 0 (leaves):
+
+Entry 0: User code and data pages
+  ..0: -> ..0: -> 
+    ..0 (va 0x0): Text segment (code)      - PTE flags: V|R|X|U (valid, read, execute, user)
+    ..1 (va 0x1000): Text continued        - PTE flags: V|R|X|U
+    ..2 (va 0x2000): Data segment          - PTE flags: V|R|W|U (valid, read, write, user)
+    ..3 (va 0x3000): Stack guard/heap      - PTE flags: V|R|W|U
+
+Entry 255: Kernel/trampoline pages (high virtual addresses)
+  ..255: -> ..511: ->
+    ..509 (USYSCALL):   Shared syscall page - PTE flags: V|R|U (read-only user access)
+    ..510 (TRAPFRAME):  Trap frame page     - PTE flags: V|R|W (kernel only, no U bit)
+    ..511 (TRAMPOLINE): Trampoline code     - PTE flags: V|R|X (kernel execute, no U bit)
+
+Permission bit meanings:
+- V (Valid):    Entry is valid and mapped
+- R (Read):     Page can be read
+- W (Write):    Page can be written
+- X (Execute):  Page contains executable code
+- U (User):     User mode can access (without U, only kernel can access)
+- A (Accessed): Page has been accessed (set by hardware)
+- D (Dirty):    Page has been written to (set by hardware)
+
+================================================================================
+
+SUPERPAGES QUESTIONS (from original implementation):
+================================================================================
+
+Q: Explain which relevant kernel data structures you had to modify to support 
+   superpages, and why.
+
+A: I modified the physical memory allocator (kalloc.c) to support allocating 
+   and freeing valid 2MB (superpage) chunks. I added a new free list 
+   `kmem.freelist_huge` for these distinct chunks. In vm.c, I modified 
+   `uvmalloc` to detect when a requested allocation size and alignment allow 
+   for a superpage, and if so, allocate a huge page and map it directly into 
+   the page table at level 1, rather than using standard 4KB pages at level 0. 
+   I also updated `uvmunmap` and `uvmcopy` to correctly handle these huge 
+   pages by checking the page table level and flags.
 
 Q: Why do we need a separate `walk` function or flag for superpages?
-A: Standard page table walking typically resolves to the leaf node at level 0 (4KB). For superpages, the leaf is at level 1 (2MB). When allocating or mapping a superpage, we need to stop at level 1 and install the physical address there. If we used the standard walk which allocates level 0 tables, we would overwrite the level 1 entry with a pointer to a level 0 table, preventing us from creating a huge page. Thus, we implemented logic to manually walk or control the walk depth to install the superpage entry correctly.
+
+A: Standard page table walking typically resolves to the leaf node at level 0 
+   (4KB). For superpages, the leaf is at level 1 (2MB). When allocating or 
+   mapping a superpage, we need to stop at level 1 and install the physical 
+   address there. If we used the standard walk which allocates level 0 tables, 
+   we would overwrite the level 1 entry with a pointer to a level 0 table, 
+   preventing us from creating a huge page. Thus, we implemented logic to 
+   manually walk or control the walk depth to install the superpage entry 
+   correctly.
+
+================================================================================
