@@ -1,42 +1,5 @@
-Q1: Which other xv6 system call(s) could be made faster using the USYSCALL shared page? Explain how.
+Q: Explain which relevant kernel data structures you had to modify to support superpages, and why.
+A: I modified the physical memory allocator (kalloc.c) to support allocating and freeing valid 2MB (superpage) chunks. I added a new free list `kmem.freelist_huge` for these distinct chunks. In `vm.c`, I modified `uvmalloc` to detect when a requested allocation size and alignment allow for a superpage, and if so, allocate a huge page and map it directly into the page table at level 1, rather than using standard 4KB pages at level 0. I also updated `uvmunmap` and `uvmcopy` to correctly handle these huge pages by checking the page table level and flags.
 
-A1: The following system calls could be made faster using the shared page:
-
-1. uptime() - The kernel could share the current ticks count in the USYSCALL page. 
-   The user could read it directly without making a system call trap into the kernel.
-
-2. getppid() - If the parent PID is stored in the USYSCALL page, a user process
-   could read its parent's PID without a system call.
-
-3. getcpu() - The current CPU ID could be shared, useful for per-CPU data structures.
-
-These work because they return read-only data that changes infrequently or 
-predictably, and the cost of the system call instruction (ecall) is much higher
-than just reading from a mapped page.
-
----
-
-Q2: For every leaf page in the vmprint output, explain what it logically contains 
-and what its permission bits are.
-
-A2: Based on the vmprint output for init process:
-
-Level 3 entries under index 0 (low virtual addresses - user code/data):
-- Page 0 (perm 0x1b = URX): Text/code segment - readable, executable by user
-- Page 1 (perm 0x17 = URW): Data segment - readable, writable by user  
-- Page 2 (perm 0x07 = RW): Stack guard page or kernel data - no user access
-- Page 3 (perm 0x17 = URW): User stack - readable, writable by user
-
-Level 3 entries under index 255->511 (high virtual addresses - kernel mappings):
-- Page 509 (perm 0x13 = UR): USYSCALL page - readable by user (read-only shared data)
-- Page 510 (perm 0xC7 = URWAD): Trapframe - accessible for saving/restoring registers
-- Page 511 (perm 0x4B = RX): Trampoline - executable, not user accessible
-
-Permission bits:
-- V (0x01): Valid
-- R (0x02): Readable  
-- W (0x04): Writable
-- X (0x08): Executable
-- U (0x10): User accessible
-- A (0x40): Accessed
-- D (0x80): Dirty
+Q: Why do we need a separate `walk` function or flag for superpages?
+A: Standard page table walking typically resolves to the leaf node at level 0 (4KB). For superpages, the leaf is at level 1 (2MB). When allocating or mapping a superpage, we need to stop at level 1 and install the physical address there. If we used the standard walk which allocates level 0 tables, we would overwrite the level 1 entry with a pointer to a level 0 table, preventing us from creating a huge page. Thus, we implemented logic to manually walk or control the walk depth to install the superpage entry correctly.

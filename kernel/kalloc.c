@@ -21,6 +21,7 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
+  struct run *freelist_huge; // Free list for huge pages (2MB)
 } kmem;
 
 void
@@ -35,8 +36,21 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+  
+  while(p + PGSIZE <= (char*)pa_end) {
+    // Check if we can free a huge page
+    // Must be 2MB aligned and have enough space remaining
+    uint64 pa = (uint64)p;
+#ifdef LAB_PGTBL
+    if ((pa % SUPERPGSIZE) == 0 && (p + SUPERPGSIZE) <= (char*)pa_end) {
+      kfree_huge(p);
+      p += SUPERPGSIZE;
+      continue;
+    }
+#endif
     kfree(p);
+    p += PGSIZE;
+  }
 }
 
 // Free the page of physical memory pointed at by pa,
@@ -72,6 +86,24 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
+  
+#ifdef LAB_PGTBL
+  // Fallback: If no normal pages, break a huge page
+  if (r == 0 && kmem.freelist_huge) {
+      struct run *huge = kmem.freelist_huge;
+      kmem.freelist_huge = huge->next;
+      
+      // Break into 4KB pages
+      char *p = (char*)huge;
+      for (int i = 0; i < SUPERPGSIZE; i += PGSIZE) {
+          struct run *small = (struct run*)(p + i);
+          small->next = kmem.freelist;
+          kmem.freelist = small;
+      }
+      r = kmem.freelist;
+  }
+#endif
+
   if(r)
     kmem.freelist = r->next;
   release(&kmem.lock);
@@ -80,3 +112,42 @@ kalloc(void)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
 }
+
+#ifdef LAB_PGTBL
+// Free a huge page (2MB)
+void
+kfree_huge(void *pa)
+{
+  struct run *r;
+
+  if(((uint64)pa % SUPERPGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
+    panic("kfree_huge");
+
+  // Fill with junk
+  memset(pa, 1, SUPERPGSIZE);
+
+  r = (struct run*)pa;
+
+  acquire(&kmem.lock);
+  r->next = kmem.freelist_huge;
+  kmem.freelist_huge = r;
+  release(&kmem.lock);
+}
+
+// Allocate a huge page (2MB)
+void *
+kalloc_huge(void)
+{
+  struct run *r;
+
+  acquire(&kmem.lock);
+  r = kmem.freelist_huge;
+  if(r)
+    kmem.freelist_huge = r->next;
+  release(&kmem.lock);
+
+  if(r)
+    memset((char*)r, 5, SUPERPGSIZE); // fill with junk
+  return (void*)r;
+}
+#endif
