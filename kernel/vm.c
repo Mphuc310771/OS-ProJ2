@@ -575,7 +575,7 @@ static void vmprint_walk(pagetable_t pagetable, int level, uint64 start_va) {
       }
 
       uint64 pa = PTE2PA(pte);
-      printf("%p: pte %p pa %p\n", (void *)va, (void *)pte, (void *)pa);
+      printf("%d: pte %p pa %p\n", i, (void *)pte, (void *)pa);
 
       // If this is not a leaf page (R, W, X not set), recurse
       if ((pte & (PTE_R | PTE_W | PTE_X)) == 0) {

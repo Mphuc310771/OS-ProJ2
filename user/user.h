@@ -24,7 +24,6 @@ int chdir(const char*);
 int dup(int);
 int getpid(void);
 char* sbrk(int);
-int pgaccess(void*, int, void*);
 int sleep(int);
 int uptime(void);
 #ifdef LAB_NET
