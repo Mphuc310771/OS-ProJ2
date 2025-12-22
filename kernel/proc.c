@@ -296,6 +296,8 @@ fork(void)
   }
   np->sz = p->sz;
 
+  np->trace_mask = p->trace_mask;
+
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
 
@@ -692,4 +694,39 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+uint64
+nproc_count(void)
+{
+  struct proc *p;
+  uint64 count = 0;
+  
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(p->state != UNUSED)
+      count++;
+  }
+  return count;
+}
+
+uint64 system_load_avg = 0;
+
+void
+update_system_load(void)
+{
+  struct proc *p;
+  uint64 active_procs = 0;
+
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(p->state == RUNNING || p->state == RUNNABLE || p->state == SLEEPING)
+      active_procs++;
+  }
+
+  system_load_avg = (system_load_avg * 9 + active_procs * 100) / 100;
+}
+
+uint64
+get_system_load(void)
+{
+  return system_load_avg;
 }

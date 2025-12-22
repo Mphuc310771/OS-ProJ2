@@ -1,0 +1,7 @@
+1. usertrap
+2. 7, SYS_exec
+3. User mode
+4. Thanh ghi: a3
+   Lệnh:  lw a3, 0(zero)
+5. Lỗi do truy cập địa chỉ 0 (chưa được ánh xạ). Giá trị scause 13 (Load Page Fault) xác nhận hành vi đọc trái phép.
+6. initcode, 1
