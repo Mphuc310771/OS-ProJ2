@@ -722,7 +722,7 @@ update_system_load(void)
       active_procs++;
   }
 
-  system_load_avg = (system_load_avg * 9 + active_procs * 100) / 100;
+  system_load_avg = (system_load_avg * 98 + active_procs * 200) / 100;
 }
 
 uint64

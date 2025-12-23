@@ -141,6 +141,23 @@ void testbad() {
   }
 }
 
+void
+test_load()
+{
+  struct sysinfo info;
+  printf("Testing Load Average...\n");
+
+  for (int i = 0; i < 5; i++) {
+    if (sysinfo(&info) < 0) {
+      printf("sysinfo failed\n");
+      exit(1);
+    }
+
+    printf("Current Load: %d.%d\n", (int)info.load / 100, (int)info.load % 100);
+    sleep(20);
+  }
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -148,6 +165,7 @@ main(int argc, char *argv[])
   testcall();
   testmem();
   testproc();
+  test_load();
   printf("sysinfotest: OK\n");
   exit(0);
 }

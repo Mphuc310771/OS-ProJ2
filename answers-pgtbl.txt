@@ -1,0 +1,60 @@
+==============================================================
+Câu 1: Giải thích cách hiện thực vmprint (và các bài tập khác).
+==============================================================
+1. vmprint:
+   Tôi đã hiện thực hàm vmprint() trong tập tin kernel/vm.c. Hàm này sử dụng phương pháp đệ quy để duyệt qua cấu trúc bảng trang 3 cấp độ (level 2, 1, và 0).
+   - Tại mỗi cấp độ, tôi dùng vòng lặp duyệt qua tất cả 512 PTE (Page Table Entries).
+   - Tôi kiểm tra xem PTE có hợp lệ hay không (bit PTE_V).
+   - Nếu hợp lệ, tôi in ra chỉ số (index), địa chỉ vật lý (pa), và gọi đệ quy xuống cấp tiếp theo (nếu chưa phải là cấp lá - leaf level).
+   - Tôi sử dụng các dấu chấm ".." thụt đầu dòng để biểu thị độ sâu của cấu trúc cây bảng trang.
+
+2. pgaccess:
+   Tôi đã hiện thực sys_pgaccess trong kernel/sysproc.c.
+   - Hàm này phân tích địa chỉ ảo bắt đầu, số lượng trang cần kiểm tra, và địa chỉ buffer của người dùng.
+   - Tôi duyệt qua các trang được yêu cầu, sử dụng hàm walk() để tìm PTE tương ứng.
+   - Tôi kiểm tra bit PTE_A (Accessed - Đã truy cập) trong các cờ của PTE.
+   - Nếu bit PTE_A được bật, tôi ghi nhận lại vào một biến bitmask và xóa bit PTE_A đi (để có thể phát hiện các lần truy cập trong tương lai).
+   - Cuối cùng, tôi dùng copyout() để gửi kết quả bitmask về không gian người dùng (userspace).
+
+3. ugetpid:
+   - Tôi đã tối ưu hóa hàm getpid() bằng cách ánh xạ một trang chỉ đọc (read-only) tại địa chỉ ảo USYSCALL trong bảng trang của mọi tiến trình.
+   - Trang này lưu trữ giá trị PID, cho phép tiến trình người dùng đọc trực tiếp PID từ địa chỉ ảo này mà không cần thực hiện system call (bẫy vào kernel), giúp loại bỏ chi phí chuyển đổi ngữ cảnh (overhead of ecall).
+
+==============================================================
+CÂU HỎI BONUS 1 (Phần 1: Tăng tốc system calls)
+Câu hỏi: System call nào khác của xv6 có thể được làm nhanh hơn bằng cách sử dụng trang chia sẻ này? Giải thích tại sao.
+==============================================================
+Trả lời:
+Một ứng viên khác cho việc tối ưu hóa này là system call `uptime()`.
+- Hiện tại, uptime() yêu cầu một system call (trap) để đọc bộ đếm thời gian (ticks) được duy trì bởi kernel.
+- Chúng ta có thể ánh xạ biến `ticks` (hoặc một bản sao của nó) vào cùng trang chia sẻ chỉ đọc (USYSCALL) được dùng cho PID.
+- Các chương trình người dùng sau đó có thể đọc thời gian uptime hiện tại trực tiếp từ địa chỉ bộ nhớ này mà không tốn chi phí chuyển đổi ngữ cảnh (ecall), giúp tăng tốc đáng kể các thao tác kiểm tra thời gian.
+
+==============================================================
+CÂU HỎI BONUS 2 (Phần 2: In bảng trang)
+Câu hỏi: Đối với mỗi trang lá (leaf page) trong output của vmprint, giải thích nội dung logic của nó và các bit quyền hạn (permission bits).
+==============================================================
+Trả lời:
+Dựa trên kết quả in ra của `vmprint` đối với tiến trình đầu tiên (`init`), các trang lá đại diện cho logic sau:
+
+1. Trang 0 (..0, ..1, ..2...): User Text và Data
+   - Nội dung logic: Chứa mã lệnh (code/instructions) và các biến toàn cục của chương trình `init`.
+   - Quyền hạn: PTE_R | PTE_W | PTE_X | PTE_U | PTE_V (Đọc, Ghi, Thực thi, Truy cập bởi User).
+     (Lưu ý: Trong một số phiên bản xv6, phần Text có thể là Read-Only, nhưng init thường gộp chung Text/Data).
+
+2. Guard Page (Trang bảo vệ - Không được in ra/Không hợp lệ):
+   - Nằm giữa vùng Data và Stack để chặn lỗi tràn ngăn xếp (stack overflow).
+
+3. Stack Page (Trang ngăn xếp):
+   - Nội dung logic: Ngăn xếp người dùng (user stack) để phục vụ gọi hàm và biến cục bộ.
+   - Quyền hạn: PTE_R | PTE_W | PTE_U | PTE_V (Đọc, Ghi, Truy cập bởi User).
+
+4. Trapframe Page (Địa chỉ cao, ví dụ ..509 hoặc ..255 tùy layout):
+   - Nội dung logic: Lưu trạng thái các thanh ghi của tiến trình người dùng khi nó đi vào kernel (do ngắt hoặc syscall).
+   - Quyền hạn: PTE_R | PTE_W | PTE_V (Đọc, Ghi). 
+   - Lưu ý: Trang này thường KHÔNG có bit PTE_U, do đó code người dùng không thể tự ý sửa đổi các thanh ghi đã lưu của chính nó.
+
+5. Trampoline Page (Địa chỉ cao nhất, ví dụ ..510 hoặc ..511):
+   - Nội dung logic: Chứa mã lệnh để chuyển đổi giữa chế độ người dùng (user mode) và chế độ kernel (kernel mode) (uservec/userret).
+   - Quyền hạn: PTE_R | PTE_X | PTE_V (Đọc, Thực thi).
+   - Lưu ý: KHÔNG có bit PTE_U, nhưng được ánh xạ ở địa chỉ ảo cao nhất để kernel sử dụng trong quá trình bẫy lỗi (traps).
