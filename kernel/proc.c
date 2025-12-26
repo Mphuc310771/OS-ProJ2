@@ -718,7 +718,7 @@ update_system_load(void)
   uint64 active_procs = 0;
 
   for(p = proc; p < &proc[NPROC]; p++){
-    if(p->state == RUNNING || p->state == RUNNABLE || p->state == SLEEPING)
+    if(p->state == RUNNING || p->state == RUNNABLE)
       active_procs++;
   }
 
